@@ -24,169 +24,729 @@ class LabelPrintController extends Controller
 
         $labels = LabelPrint::query()
             ->with(['product', 'creator'])
-            ->when($search, fn ($query) => $query->where(function ($query) use ($search) {
-                $query->where('purchase_order_no', 'like', "%{$search}%")
-                    ->orWhere('delivery_note_no', 'like', "%{$search}%")
-                    ->orWhere('customer_part_no', 'like', "%{$search}%")
-                    ->orWhere('sender_address', 'like', "%{$search}%")
-                    ->orWhere('recipient_address', 'like', "%{$search}%")
-                    ->orWhereHas('product', fn ($product) => $product
-                        ->where('name', 'like', "%{$search}%")
-                        ->orWhere('sku', 'like', "%{$search}%"));
-            }))
-            ->when($status === 'printed', fn ($query) => $query->whereNotNull('printed_at'))
-            ->when($status === 'ready', fn ($query) => $query->whereNull('printed_at'))
+            ->when(
+                $search,
+                fn ($query) => $query->where(
+                    function ($query) use ($search) {
+                        $query
+                            ->where(
+                                'purchase_order_no',
+                                'like',
+                                "%{$search}%"
+                            )
+                            ->orWhere(
+                                'delivery_note_no',
+                                'like',
+                                "%{$search}%"
+                            )
+                            ->orWhere(
+                                'customer_part_no',
+                                'like',
+                                "%{$search}%"
+                            )
+                            ->orWhere(
+                                'sender_address',
+                                'like',
+                                "%{$search}%"
+                            )
+                            ->orWhere(
+                                'recipient_address',
+                                'like',
+                                "%{$search}%"
+                            )
+                            ->orWhereHas(
+                                'product',
+                                fn ($product) => $product
+                                    ->where(
+                                        'name',
+                                        'like',
+                                        "%{$search}%"
+                                    )
+                                    ->orWhere(
+                                        'sku',
+                                        'like',
+                                        "%{$search}%"
+                                    )
+                            );
+                    }
+                )
+            )
+            ->when(
+                $status === 'printed',
+                fn ($query) =>
+                    $query->whereNotNull('printed_at')
+            )
+            ->when(
+                $status === 'ready',
+                fn ($query) =>
+                    $query->whereNull('printed_at')
+            )
             ->latest()
             ->paginate(25)
             ->withQueryString();
 
-        return view('labels.index', compact('labels', 'search', 'status'));
+        return view(
+            'labels.index',
+            compact(
+                'labels',
+                'search',
+                'status'
+            )
+        );
     }
 
-    public function create(BarcodeService $barcode): View
-    {
+    public function create(
+        BarcodeService $barcode
+    ): View {
         $products = Product::query()
-            ->select(['id', 'sku', 'name', 'description', 'customer_part_no', 'supplier_code', 'barcode_value', 'uom', 'product_category_id'])
+            ->select([
+                'id',
+                'sku',
+                'name',
+                'description',
+                'customer_part_no',
+                'supplier_code',
+                'barcode_value',
+                'uom',
+                'product_category_id',
+            ])
             ->with('category')
             ->where('is_active', true)
-            ->withSum('stockBalances as inventory_stock', 'quantity')
+            ->withSum(
+                'stockBalances as inventory_stock',
+                'quantity'
+            )
             ->orderBy('name')
             ->get()
-            ->map(fn (Product $product) => [
-                'id' => $product->id,
-                'sku' => $product->sku,
-                'name' => $product->name,
-                'description' => $product->description,
-                'customer_part_no' => $product->customer_part_no,
-                'supplier_code' => $product->supplier_code,
-                'barcode_value' => $product->barcode_value,
-                'uom' => $product->uom,
-                'inventory_stock' => (float) ($product->inventory_stock ?? 0),
-                'category_name' => $product->category?->name,
-                'catalog_url' => $product->catalogUrl(),
+            ->map(
+                fn (Product $product) => [
+                    'id' =>
+                        $product->id,
+
+                    'sku' =>
+                        $product->sku,
+
+                    'name' =>
+                        $product->name,
+
+                    'description' =>
+                        $product->description,
+
+                    'customer_part_no' =>
+                        $product->customer_part_no,
+
+                    'supplier_code' =>
+                        $product->supplier_code,
+
+                    'barcode_value' =>
+                        $product->barcode_value,
+
+                    'uom' =>
+                        $product->uom,
+
+                    'inventory_stock' =>
+                        (float) (
+                            $product->inventory_stock
+                            ?? 0
+                        ),
+
+                    'category_name' =>
+                        $product
+                            ->category
+                            ?->name,
+
+                    'catalog_url' =>
+                        $product->catalogUrl(),
+                ]
+            );
+
+        $catalogQrs = $products
+            ->pluck('catalog_url')
+            ->push(
+                route(
+                    'catalogs.patria'
+                )
+            )
+            ->unique()
+            ->mapWithKeys(
+                fn ($url) => [
+                    $url =>
+                        $barcode->qrDataUri(
+                            $url
+                        ),
+                ]
+            );
+
+        return view(
+            'labels.create',
+            [
+                'products' =>
+                    $products,
+
+                'catalogQrs' =>
+                    $catalogQrs,
+
+                'catalogQrDataUri' =>
+                    $barcode->qrDataUri(
+                        route(
+                            'catalogs.patria'
+                        )
+                    ),
+            ]
+        );
+    }
+
+    public function store(
+        StoreLabelPrintRequest $request
+    ): RedirectResponse {
+        $product = Product::findOrFail(
+            $request->integer(
+                'product_id'
+            )
+        );
+
+        $uuid =
+            (string) Str::uuid();
+
+        $logoPath = null;
+
+        /*
+        |--------------------------------------------------------------------------
+        | Logo Label
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $request->hasFile(
+                'logo'
+            )
+        ) {
+            $logoPath =
+                $request
+                    ->file('logo')
+                    ->store(
+                        'logos/labels',
+                        'public'
+                    );
+        } elseif (
+            $product->logo_path &&
+            Storage::disk('public')
+                ->exists(
+                    $product->logo_path
+                )
+        ) {
+            $extension =
+                pathinfo(
+                    $product->logo_path,
+                    PATHINFO_EXTENSION
+                )
+                ?: 'png';
+
+            $logoPath =
+                "logos/labels/{$uuid}.{$extension}";
+
+            Storage::disk('public')
+                ->copy(
+                    $product->logo_path,
+                    $logoPath
+                );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Validated Data
+        |--------------------------------------------------------------------------
+        */
+
+        $validated =
+            collect(
+                $request->validated()
+            )
+                ->except('logo')
+                ->all();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Create Label
+        |--------------------------------------------------------------------------
+        */
+
+        $labelPrint =
+            LabelPrint::create([
+                ...$validated,
+
+                'purchase_order_no' =>
+                    $validated[
+                        'purchase_order_no'
+                    ]
+                    ?? '',
+
+                'quantity' =>
+                    $validated[
+                        'quantity'
+                    ]
+                    ?? 0,
+
+                'uuid' =>
+                    $uuid,
+
+                'created_by' =>
+                    $request
+                        ->user()
+                        ->id,
+
+                'barcode_value' =>
+                    $product
+                        ->barcode_value,
+
+                'inventory_stock' =>
+                    $product
+                        ->stockBalances()
+                        ->sum(
+                            'quantity'
+                        ),
+
+                'logo_path' =>
+                    $logoPath,
+
+                'product_snapshot' => [
+                    ...$product->only([
+                        'sku',
+                        'name',
+                        'description',
+                        'customer_part_no',
+                        'supplier_code',
+                        'barcode_value',
+                        'uom',
+                    ]),
+
+                    'category_name' =>
+                        $product
+                            ->category
+                            ?->name,
+
+                    'catalog_url' =>
+                        $product
+                            ->catalogUrl(),
+                ],
             ]);
 
-        $catalogQrs = $products->pluck('catalog_url')->push(route('catalogs.patria'))->unique()
-            ->mapWithKeys(fn ($url) => [$url => $barcode->qrDataUri($url)]);
-
-        return view('labels.create', [
-            'products' => $products,
-            'catalogQrs' => $catalogQrs,
-            'catalogQrDataUri' => $barcode->qrDataUri(route('catalogs.patria')),
-        ]);
+        return redirect()
+            ->route(
+                'labels.show',
+                $labelPrint
+            )
+            ->with(
+                'success',
+                'Label berhasil dibuat dan siap dicetak.'
+            );
     }
 
-    public function store(StoreLabelPrintRequest $request): RedirectResponse
-    {
-        $product = Product::findOrFail($request->integer('product_id'));
-        $uuid = (string) Str::uuid();
-        $logoPath = null;
-        if ($request->hasFile('logo')) {
-            $logoPath = $request->file('logo')->store('logos/labels', 'public');
-        } elseif ($product->logo_path && Storage::disk('public')->exists($product->logo_path)) {
-            $extension = pathinfo($product->logo_path, PATHINFO_EXTENSION) ?: 'png';
-            $logoPath = "logos/labels/{$uuid}.{$extension}";
-            Storage::disk('public')->copy($product->logo_path, $logoPath);
-        }
-        $validated = collect($request->validated())->except('logo')->all();
-        $labelPrint = LabelPrint::create([
-            ...$validated,
-            'purchase_order_no' => $validated['purchase_order_no'] ?? '',
-            'quantity' => $validated['quantity'] ?? 0,
-            'uuid' => $uuid,
-            'created_by' => $request->user()->id,
-            'barcode_value' => $product->barcode_value,
-            'inventory_stock' => $product->stockBalances()->sum('quantity'),
-            'logo_path' => $logoPath,
-            'product_snapshot' => [
-                ...$product->only([
-                    'sku', 'name', 'description', 'customer_part_no', 'supplier_code', 'barcode_value', 'uom',
-                ]),
-                'category_name' => $product->category?->name,
-                'catalog_url' => $product->catalogUrl(),
-            ],
-        ]);
+    /*
+    |--------------------------------------------------------------------------
+    | HAPUS LABEL
+    |--------------------------------------------------------------------------
+    */
 
-        return redirect()->route('labels.show', $labelPrint)->with('success', 'Label berhasil dibuat dan siap dicetak.');
-    }
-
-    public function show(LabelPrint $labelPrint, BarcodeService $barcode, LabelBrandingService $branding): View
-    {
-        return view('labels.show', $this->viewData($labelPrint, $barcode, $branding));
-    }
-
-    public function pdf(LabelPrint $labelPrint, BarcodeService $barcode, LabelBrandingService $branding)
-    {
-        $labelPrint->update(['printed_at' => now()]);
-
-        return Pdf::loadView('labels.pdf', [
-            'pages' => $this->printPages(collect([$labelPrint->fresh()]), [], $barcode, $branding),
-        ])
-            ->setPaper([0, 0, 283.465, 283.465])
-            ->stream('label-'.($labelPrint->purchase_order_no ?: $labelPrint->uuid).'.pdf');
-    }
-
-    public function bulkPdf(Request $request, BarcodeService $barcode, LabelBrandingService $branding)
-    {
-        $validated = $request->validate([
-            'label_ids' => ['required', 'array', 'min:1', 'max:100'],
-            'label_ids.*' => ['integer', 'distinct', 'exists:label_prints,id'],
-            'copies' => ['nullable', 'array'],
-            'copies.*' => ['nullable', 'integer', 'min:1', 'max:50'],
-        ]);
-
-        $ids = collect($validated['label_ids'])->map(fn ($id) => (int) $id)->values();
-        $copies = collect($validated['copies'] ?? []);
-        $totalPages = $ids->sum(fn ($id) => (int) ($copies->get($id, 1)));
-
-        if ($totalPages > 300) {
-            return back()->withErrors(['label_ids' => 'Maksimal 300 halaman dalam satu file PDF.'])->withInput();
+    public function destroy(
+        LabelPrint $labelPrint
+    ): RedirectResponse {
+        /*
+         * Logo yang disimpan pada label merupakan
+         * salinan khusus di folder logos/labels.
+         *
+         * Hapus file tersebut agar tidak menjadi
+         * file sampah setelah label dihapus.
+         */
+        if (
+            $labelPrint->logo_path &&
+            str_starts_with(
+                $labelPrint->logo_path,
+                'logos/labels/'
+            ) &&
+            Storage::disk('public')
+                ->exists(
+                    $labelPrint->logo_path
+                )
+        ) {
+            Storage::disk('public')
+                ->delete(
+                    $labelPrint->logo_path
+                );
         }
 
-        $labelsById = LabelPrint::with('product')->whereIn('id', $ids)->get()->keyBy('id');
-        $labels = $ids->map(fn ($id) => $labelsById->get($id))->filter();
+        /*
+         * Hanya menghapus riwayat label.
+         *
+         * Product / Master Part dan stock
+         * tidak ikut terhapus.
+         */
+        $labelPrint->delete();
 
-        LabelPrint::whereIn('id', $ids)->update(['printed_at' => now()]);
-
-        return Pdf::loadView('labels.pdf', [
-            'pages' => $this->printPages($labels, $copies, $barcode, $branding),
-        ])
-            ->setPaper([0, 0, 283.465, 283.465])
-            ->stream('label-bulk-'.now()->format('Ymd-His').'.pdf');
+        return redirect()
+            ->route(
+                'labels.index'
+            )
+            ->with(
+                'success',
+                'Label berhasil dihapus.'
+            );
     }
 
-    private function viewData(LabelPrint $labelPrint, BarcodeService $barcode, LabelBrandingService $branding): array
-    {
-        $labelPrint->loadMissing('product');
+    public function show(
+        LabelPrint $labelPrint,
+        BarcodeService $barcode,
+        LabelBrandingService $branding
+    ): View {
+        return view(
+            'labels.show',
+            $this->viewData(
+                $labelPrint,
+                $barcode,
+                $branding
+            )
+        );
+    }
+
+    public function pdf(
+        LabelPrint $labelPrint,
+        BarcodeService $barcode,
+        LabelBrandingService $branding
+    ) {
+        $labelPrint->update([
+            'printed_at' =>
+                now(),
+        ]);
+
+        return Pdf::loadView(
+            'labels.pdf',
+            [
+                'pages' =>
+                    $this->printPages(
+                        collect([
+                            $labelPrint->fresh(),
+                        ]),
+                        [],
+                        $barcode,
+                        $branding
+                    ),
+            ]
+        )
+            ->setPaper([
+                0,
+                0,
+                283.465,
+                283.465,
+            ])
+            ->stream(
+                'label-'
+                . (
+                    $labelPrint
+                        ->purchase_order_no
+                    ?: $labelPrint
+                        ->uuid
+                )
+                . '.pdf'
+            );
+    }
+
+    public function bulkPdf(
+        Request $request,
+        BarcodeService $barcode,
+        LabelBrandingService $branding
+    ) {
+        /*
+        |--------------------------------------------------------------------------
+        | Validation
+        |--------------------------------------------------------------------------
+        */
+
+        $validated =
+            $request->validate([
+                'label_ids' => [
+                    'required',
+                    'array',
+                    'min:1',
+                    'max:100',
+                ],
+
+                'label_ids.*' => [
+                    'integer',
+                    'distinct',
+                    'exists:label_prints,id',
+                ],
+
+                'copies' => [
+                    'nullable',
+                    'array',
+                ],
+
+                'copies.*' => [
+                    'nullable',
+                    'integer',
+                    'min:1',
+                    'max:50',
+                ],
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Label IDs
+        |--------------------------------------------------------------------------
+        */
+
+        $ids =
+            collect(
+                $validated[
+                    'label_ids'
+                ]
+            )
+                ->map(
+                    fn ($id) =>
+                        (int) $id
+                )
+                ->values();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Copies
+        |--------------------------------------------------------------------------
+        */
+
+        $copies =
+            collect(
+                $validated[
+                    'copies'
+                ]
+                ?? []
+            );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Total Pages
+        |--------------------------------------------------------------------------
+        */
+
+        $totalPages =
+            $ids->sum(
+                fn ($id) =>
+                    (int) (
+                        $copies->get(
+                            $id,
+                            1
+                        )
+                    )
+            );
+
+        if (
+            $totalPages > 300
+        ) {
+            return back()
+                ->withErrors([
+                    'label_ids' =>
+                        'Maksimal 300 halaman dalam satu file PDF.',
+                ])
+                ->withInput();
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Load Labels
+        |--------------------------------------------------------------------------
+        */
+
+        $labelsById =
+            LabelPrint::with(
+                'product'
+            )
+                ->whereIn(
+                    'id',
+                    $ids
+                )
+                ->get()
+                ->keyBy(
+                    'id'
+                );
+
+        $labels =
+            $ids
+                ->map(
+                    fn ($id) =>
+                        $labelsById->get(
+                            $id
+                        )
+                )
+                ->filter();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Mark as Printed
+        |--------------------------------------------------------------------------
+        */
+
+        LabelPrint::whereIn(
+            'id',
+            $ids
+        )->update([
+            'printed_at' =>
+                now(),
+        ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Generate PDF
+        |--------------------------------------------------------------------------
+        */
+
+        return Pdf::loadView(
+            'labels.pdf',
+            [
+                'pages' =>
+                    $this->printPages(
+                        $labels,
+                        $copies,
+                        $barcode,
+                        $branding
+                    ),
+            ]
+        )
+            ->setPaper([
+                0,
+                0,
+                283.465,
+                283.465,
+            ])
+            ->stream(
+                'label-bulk-'
+                . now()->format(
+                    'Ymd-His'
+                )
+                . '.pdf'
+            );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VIEW DATA
+    |--------------------------------------------------------------------------
+    */
+
+    private function viewData(
+        LabelPrint $labelPrint,
+        BarcodeService $barcode,
+        LabelBrandingService $branding
+    ): array {
+        $labelPrint->loadMissing(
+            'product'
+        );
 
         return [
-            'label' => $labelPrint,
-            'partBarcode' => $barcode->html($labelPrint->barcode_value),
-            'catalogQrDataUri' => $barcode->qrDataUri($labelPrint->product_snapshot['catalog_url'] ?? route('catalogs.patria')),
-            'logoDataUri' => $branding->dataUriForPath($labelPrint->logo_path)
-                ?: $branding->publicLabelLogoDataUri()
-                ?: $branding->logoDataUri(),
+            'label' =>
+                $labelPrint,
+
+            'partBarcode' =>
+                $barcode->html(
+                    $labelPrint
+                        ->barcode_value
+                ),
+
+            'catalogQrDataUri' =>
+                $barcode->qrDataUri(
+                    $labelPrint
+                        ->product_snapshot[
+                            'catalog_url'
+                        ]
+                    ?? route(
+                        'catalogs.patria'
+                    )
+                ),
+
+            'logoDataUri' =>
+                $branding->dataUriForPath(
+                    $labelPrint
+                        ->logo_path
+                )
+                ?: $branding
+                    ->publicLabelLogoDataUri()
+                ?: $branding
+                    ->logoDataUri(),
         ];
     }
 
-    private function printPages(Collection $labels, Collection|array $copies, BarcodeService $barcode, LabelBrandingService $branding): array
-    {
-        $copies = collect($copies);
+    /*
+    |--------------------------------------------------------------------------
+    | PRINT PAGES
+    |--------------------------------------------------------------------------
+    */
+
+    private function printPages(
+        Collection $labels,
+        Collection|array $copies,
+        BarcodeService $barcode,
+        LabelBrandingService $branding
+    ): array {
+        $copies =
+            collect(
+                $copies
+            );
+
         $pages = [];
 
-        foreach ($labels as $label) {
-            $label->loadMissing('product');
+        foreach (
+            $labels as $label
+        ) {
+            $label->loadMissing(
+                'product'
+            );
 
-            $catalogQrDataUri = $barcode->qrDataUri($label->product_snapshot['catalog_url'] ?? route('catalogs.patria'));
-            $logoDataUri = $branding->dataUriForPath($label->logo_path)
-                ?: $branding->publicLabelLogoDataUri()
-                ?: $branding->logoDataUri();
+            /*
+             * QR katalog.
+             */
+            $catalogQrDataUri =
+                $barcode->qrDataUri(
+                    $label
+                        ->product_snapshot[
+                            'catalog_url'
+                        ]
+                    ?? route(
+                        'catalogs.patria'
+                    )
+                );
 
-            foreach (range(1, (int) $copies->get($label->id, 1)) as $copy) {
+            /*
+             * Logo.
+             */
+            $logoDataUri =
+                $branding->dataUriForPath(
+                    $label->logo_path
+                )
+                ?: $branding
+                    ->publicLabelLogoDataUri()
+                ?: $branding
+                    ->logoDataUri();
+
+            /*
+             * Buat halaman sesuai jumlah copy.
+             */
+            foreach (
+                range(
+                    1,
+                    (int) $copies->get(
+                        $label->id,
+                        1
+                    )
+                )
+                as $copy
+            ) {
                 $pages[] = [
-                    'label' => $label,
-                    'catalogQrDataUri' => $catalogQrDataUri,
-                    'logoDataUri' => $logoDataUri,
+                    'label' =>
+                        $label,
+
+                    'catalogQrDataUri' =>
+                        $catalogQrDataUri,
+
+                    'logoDataUri' =>
+                        $logoDataUri,
                 ];
             }
         }

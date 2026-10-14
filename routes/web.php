@@ -17,77 +17,825 @@ use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\WarehouseController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', fn () => auth()->check() ? redirect(auth()->user()->homePath()) : redirect()->route('login'));
-Route::get('/catalog/patria-air-brake-system-parts', fn () => response()->file(
-    public_path('catalogs/patria-air-brake-system-parts.pdf'),
-    ['Content-Type' => 'application/pdf'],
-))->name('catalogs.patria');
-Route::get('/catalog/products/{filename}', [ProductCategoryController::class, 'catalog'])
-    ->where('filename', '[A-Za-z0-9]{40}\\.pdf')->name('catalogs.products');
+Route::get(
+    '/',
+    fn () =>
+        auth()->check()
+            ? redirect(auth()->user()->homePath())
+            : redirect()->route('login')
+);
 
-Route::middleware('guest')->group(function () {
-    Route::get('/login', [AuthController::class, 'create'])->name('login');
-    Route::post('/login', [AuthController::class, 'store'])->name('login.store');
-    Route::get('/pos/login', [AuthController::class, 'createPos'])->name('pos.login');
-    Route::post('/pos/login', [AuthController::class, 'storePos'])->name('pos.login.store');
-    Route::get('/forgot-password', [ForgotPasswordController::class, 'create'])->name('password.request');
-    Route::post('/forgot-password', [ForgotPasswordController::class, 'store'])->name('password.email');
-    Route::get('/reset-password/{token}', [ResetPasswordController::class, 'create'])->name('password.reset');
-    Route::post('/reset-password', [ResetPasswordController::class, 'store'])->name('password.store');
-});
+Route::get(
+    '/catalog/patria-air-brake-system-parts',
+    fn () => response()->file(
+        public_path(
+            'catalogs/patria-air-brake-system-parts.pdf'
+        ),
+        [
+            'Content-Type' => 'application/pdf',
+        ]
+    )
+)->name('catalogs.patria');
 
-Route::middleware('auth')->group(function () {
-    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::put('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::put('/profile/password', [ProfileController::class, 'updatePassword'])->name('profile.password');
-    Route::post('/logout', [AuthController::class, 'destroy'])->name('logout');
-});
+Route::get(
+    '/catalog/products/{filename}',
+    [
+        ProductCategoryController::class,
+        'catalog',
+    ]
+)
+    ->where(
+        'filename',
+        '[A-Za-z0-9]{40}\\.pdf'
+    )
+    ->name('catalogs.products');
 
-Route::middleware(['auth', 'portal:pos', 'permission:pos.access'])->group(function () {
-    Route::get('/pos', [PosController::class, 'index'])->name('pos.index');
-});
 
-Route::middleware(['auth', 'portal:backoffice'])->group(function () {
-    Route::get('/dashboard', DashboardController::class)->middleware('permission:dashboard.view')->name('dashboard');
-    Route::get('/labels', [LabelPrintController::class, 'index'])->middleware('permission:labels.view')->name('labels.index');
-    Route::get('/labels/create', [LabelPrintController::class, 'create'])->middleware('permission:labels.create')->name('labels.create');
-    Route::post('/labels', [LabelPrintController::class, 'store'])->middleware('permission:labels.create')->name('labels.store');
-    Route::post('/labels/bulk-pdf', [LabelPrintController::class, 'bulkPdf'])->middleware('permission:labels.print')->name('labels.bulk-pdf');
-    Route::get('/labels/{labelPrint}', [LabelPrintController::class, 'show'])->middleware('permission:labels.view,labels.create')->name('labels.show');
-    Route::get('/labels/{labelPrint}/pdf', [LabelPrintController::class, 'pdf'])->middleware('permission:labels.print')->name('labels.pdf');
-    Route::get('/delivery-orders', [DeliveryOrderController::class, 'index'])->middleware('permission:delivery_orders.view')->name('delivery-orders.index');
-    Route::get('/delivery-orders/create', [DeliveryOrderController::class, 'create'])->middleware('permission:delivery_orders.create')->name('delivery-orders.create');
-    Route::post('/delivery-orders', [DeliveryOrderController::class, 'store'])->middleware('permission:delivery_orders.create')->name('delivery-orders.store');
-    Route::post('/delivery-orders/customers', [DeliveryOrderController::class, 'storeCustomer'])->middleware('permission:delivery_orders.create')->name('delivery-orders.customers.store');
-    Route::post('/delivery-orders/batch', [DeliveryOrderController::class, 'batch'])->middleware('permission:delivery_orders.print')->name('delivery-orders.batch');
-    Route::post('/delivery-orders/batch/pdf', [DeliveryOrderController::class, 'batchPdf'])->middleware('permission:delivery_orders.print')->name('delivery-orders.batch.pdf');
-    Route::post('/delivery-orders/batch/shipping-stickers', [DeliveryOrderController::class, 'batchShippingStickerPdf'])->middleware('permission:delivery_orders.print')->name('delivery-orders.batch.shipping-stickers');
-    Route::get('/delivery-orders/{deliveryOrder}', [DeliveryOrderController::class, 'show'])->middleware('permission:delivery_orders.view,delivery_orders.create')->name('delivery-orders.show');
-    Route::get('/delivery-orders/{deliveryOrder}/edit', [DeliveryOrderController::class, 'edit'])->middleware('permission:delivery_orders.create')->name('delivery-orders.edit');
-    Route::put('/delivery-orders/{deliveryOrder}', [DeliveryOrderController::class, 'update'])->middleware('permission:delivery_orders.create')->name('delivery-orders.update');
-    Route::get('/delivery-orders/{deliveryOrder}/pdf', [DeliveryOrderController::class, 'pdf'])->middleware('permission:delivery_orders.print')->name('delivery-orders.pdf');
-    Route::get('/delivery-orders/{deliveryOrder}/shipping-sticker', [DeliveryOrderController::class, 'shippingStickerPdf'])->middleware('permission:delivery_orders.print')->name('delivery-orders.shipping-sticker');
-    Route::get('/stock-masuk', [StockController::class, 'createIn'])->middleware('permission:inventory.stock_in')->name('stock.in.create');
-    Route::post('/stock-masuk', [StockController::class, 'storeIn'])->middleware('permission:inventory.stock_in')->name('stock.in.store');
-    Route::get('/stock-keluar', [StockController::class, 'createOut'])->middleware('permission:inventory.stock_out')->name('stock.out.create');
-    Route::post('/stock-keluar', [StockController::class, 'storeOut'])->middleware('permission:inventory.stock_out')->name('stock.out.store');
-    Route::get('/products', [ProductController::class, 'index'])->middleware('permission:products.view')->name('products.index');
-    Route::get('/products/import-template', [ProductController::class, 'importTemplate'])->middleware('permission:products.import')->name('products.import-template');
-    Route::post('/products', [ProductController::class, 'store'])->middleware('permission:products.manage')->name('products.store');
-    Route::post('/products/import', [ProductController::class, 'import'])->middleware('permission:products.import')->name('products.import');
-    Route::get('/products/{product}/edit', [ProductController::class, 'edit'])->middleware('permission:products.manage')->name('products.edit');
-    Route::put('/products/{product}', [ProductController::class, 'update'])->middleware('permission:products.manage')->name('products.update');
-    Route::delete('/products/{product}', [ProductController::class, 'destroy'])->middleware('permission:products.manage')->name('products.destroy');
-    Route::get('/product-categories', [ProductCategoryController::class, 'index'])->middleware('permission:products.view')->name('product-categories.index');
-    Route::resource('product-categories', ProductCategoryController::class)->only(['store', 'edit', 'update', 'destroy'])->middleware('permission:products.manage');
-    Route::resource('warehouses', WarehouseController::class)->except(['create', 'show'])->middleware('permission:inventory.manage');
-    Route::get('/settings', [LabelSettingController::class, 'edit'])->middleware('permission:branding.manage')->name('settings.edit');
-    Route::put('/settings', [LabelSettingController::class, 'update'])->middleware('permission:branding.manage')->name('settings.update');
-    Route::delete('/settings/logo', [LabelSettingController::class, 'destroy'])->middleware('permission:branding.manage')->name('settings.logo.destroy');
-    Route::delete('/settings/favicon', [LabelSettingController::class, 'destroyFavicon'])->middleware('permission:branding.manage')->name('settings.favicon.destroy');
+/*
+|--------------------------------------------------------------------------
+| GUEST
+|--------------------------------------------------------------------------
+*/
 
-    Route::middleware('super_admin')->group(function () {
-        Route::resource('roles', RoleController::class)->except('show');
-        Route::resource('users', UserManagementController::class)->except('show');
+Route::middleware('guest')
+    ->group(function () {
+        Route::get(
+            '/login',
+            [
+                AuthController::class,
+                'create',
+            ]
+        )->name('login');
+
+        Route::post(
+            '/login',
+            [
+                AuthController::class,
+                'store',
+            ]
+        )->name('login.store');
+
+
+        Route::get(
+            '/pos/login',
+            [
+                AuthController::class,
+                'createPos',
+            ]
+        )->name('pos.login');
+
+        Route::post(
+            '/pos/login',
+            [
+                AuthController::class,
+                'storePos',
+            ]
+        )->name('pos.login.store');
+
+
+        Route::get(
+            '/forgot-password',
+            [
+                ForgotPasswordController::class,
+                'create',
+            ]
+        )->name('password.request');
+
+        Route::post(
+            '/forgot-password',
+            [
+                ForgotPasswordController::class,
+                'store',
+            ]
+        )->name('password.email');
+
+
+        Route::get(
+            '/reset-password/{token}',
+            [
+                ResetPasswordController::class,
+                'create',
+            ]
+        )->name('password.reset');
+
+        Route::post(
+            '/reset-password',
+            [
+                ResetPasswordController::class,
+                'store',
+            ]
+        )->name('password.store');
     });
-});
+
+
+/*
+|--------------------------------------------------------------------------
+| AUTH
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware('auth')
+    ->group(function () {
+        Route::get(
+            '/profile',
+            [
+                ProfileController::class,
+                'edit',
+            ]
+        )->name('profile.edit');
+
+        Route::put(
+            '/profile',
+            [
+                ProfileController::class,
+                'update',
+            ]
+        )->name('profile.update');
+
+        Route::put(
+            '/profile/password',
+            [
+                ProfileController::class,
+                'updatePassword',
+            ]
+        )->name('profile.password');
+
+
+        Route::post(
+            '/logout',
+            [
+                AuthController::class,
+                'destroy',
+            ]
+        )->name('logout');
+    });
+
+
+/*
+|--------------------------------------------------------------------------
+| POS
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware([
+    'auth',
+    'portal:pos',
+    'permission:pos.access',
+])
+    ->group(function () {
+        Route::get(
+            '/pos',
+            [
+                PosController::class,
+                'index',
+            ]
+        )->name('pos.index');
+    });
+
+
+/*
+|--------------------------------------------------------------------------
+| BACKOFFICE
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware([
+    'auth',
+    'portal:backoffice',
+])
+    ->group(function () {
+
+        /*
+        |--------------------------------------------------------------------------
+        | DASHBOARD
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get(
+            '/dashboard',
+            DashboardController::class
+        )
+            ->middleware(
+                'permission:dashboard.view'
+            )
+            ->name('dashboard');
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | LABEL
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get(
+            '/labels',
+            [
+                LabelPrintController::class,
+                'index',
+            ]
+        )
+            ->middleware(
+                'permission:labels.view'
+            )
+            ->name('labels.index');
+
+
+        Route::get(
+            '/labels/create',
+            [
+                LabelPrintController::class,
+                'create',
+            ]
+        )
+            ->middleware(
+                'permission:labels.create'
+            )
+            ->name('labels.create');
+
+
+        Route::post(
+            '/labels',
+            [
+                LabelPrintController::class,
+                'store',
+            ]
+        )
+            ->middleware(
+                'permission:labels.create'
+            )
+            ->name('labels.store');
+
+
+        Route::post(
+            '/labels/bulk-pdf',
+            [
+                LabelPrintController::class,
+                'bulkPdf',
+            ]
+        )
+            ->middleware(
+                'permission:labels.print'
+            )
+            ->name('labels.bulk-pdf');
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | HAPUS LABEL
+        |--------------------------------------------------------------------------
+        */
+
+        Route::delete(
+            '/labels/{labelPrint}',
+            [
+                LabelPrintController::class,
+                'destroy',
+            ]
+        )
+            ->middleware(
+                'permission:labels.create'
+            )
+            ->name('labels.destroy');
+
+
+        Route::get(
+            '/labels/{labelPrint}',
+            [
+                LabelPrintController::class,
+                'show',
+            ]
+        )
+            ->middleware(
+                'permission:labels.view,labels.create'
+            )
+            ->name('labels.show');
+
+
+        Route::get(
+            '/labels/{labelPrint}/pdf',
+            [
+                LabelPrintController::class,
+                'pdf',
+            ]
+        )
+            ->middleware(
+                'permission:labels.print'
+            )
+            ->name('labels.pdf');
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | DELIVERY ORDER
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get(
+            '/delivery-orders',
+            [
+                DeliveryOrderController::class,
+                'index',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.view'
+            )
+            ->name(
+                'delivery-orders.index'
+            );
+
+
+        Route::get(
+            '/delivery-orders/create',
+            [
+                DeliveryOrderController::class,
+                'create',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.create'
+            )
+            ->name(
+                'delivery-orders.create'
+            );
+
+
+        Route::post(
+            '/delivery-orders',
+            [
+                DeliveryOrderController::class,
+                'store',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.create'
+            )
+            ->name(
+                'delivery-orders.store'
+            );
+
+
+        Route::post(
+            '/delivery-orders/customers',
+            [
+                DeliveryOrderController::class,
+                'storeCustomer',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.create'
+            )
+            ->name(
+                'delivery-orders.customers.store'
+            );
+
+
+        Route::post(
+            '/delivery-orders/batch',
+            [
+                DeliveryOrderController::class,
+                'batch',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.print'
+            )
+            ->name(
+                'delivery-orders.batch'
+            );
+
+
+        Route::post(
+            '/delivery-orders/batch/pdf',
+            [
+                DeliveryOrderController::class,
+                'batchPdf',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.print'
+            )
+            ->name(
+                'delivery-orders.batch.pdf'
+            );
+
+
+        Route::post(
+            '/delivery-orders/batch/shipping-stickers',
+            [
+                DeliveryOrderController::class,
+                'batchShippingStickerPdf',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.print'
+            )
+            ->name(
+                'delivery-orders.batch.shipping-stickers'
+            );
+
+
+        Route::get(
+            '/delivery-orders/{deliveryOrder}',
+            [
+                DeliveryOrderController::class,
+                'show',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.view,delivery_orders.create'
+            )
+            ->name(
+                'delivery-orders.show'
+            );
+
+
+        Route::get(
+            '/delivery-orders/{deliveryOrder}/edit',
+            [
+                DeliveryOrderController::class,
+                'edit',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.create'
+            )
+            ->name(
+                'delivery-orders.edit'
+            );
+
+
+        Route::put(
+            '/delivery-orders/{deliveryOrder}',
+            [
+                DeliveryOrderController::class,
+                'update',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.create'
+            )
+            ->name(
+                'delivery-orders.update'
+            );
+
+
+        Route::get(
+            '/delivery-orders/{deliveryOrder}/pdf',
+            [
+                DeliveryOrderController::class,
+                'pdf',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.print'
+            )
+            ->name(
+                'delivery-orders.pdf'
+            );
+
+
+        Route::get(
+            '/delivery-orders/{deliveryOrder}/shipping-sticker',
+            [
+                DeliveryOrderController::class,
+                'shippingStickerPdf',
+            ]
+        )
+            ->middleware(
+                'permission:delivery_orders.print'
+            )
+            ->name(
+                'delivery-orders.shipping-sticker'
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | STOCK MASUK
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get(
+            '/stock-masuk',
+            [
+                StockController::class,
+                'createIn',
+            ]
+        )
+            ->middleware(
+                'permission:inventory.stock_in'
+            )
+            ->name(
+                'stock.in.create'
+            );
+
+
+        Route::post(
+            '/stock-masuk',
+            [
+                StockController::class,
+                'storeIn',
+            ]
+        )
+            ->middleware(
+                'permission:inventory.stock_in'
+            )
+            ->name(
+                'stock.in.store'
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | STOCK KELUAR
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get(
+            '/stock-keluar',
+            [
+                StockController::class,
+                'createOut',
+            ]
+        )
+            ->middleware(
+                'permission:inventory.stock_out'
+            )
+            ->name(
+                'stock.out.create'
+            );
+
+
+        Route::post(
+            '/stock-keluar',
+            [
+                StockController::class,
+                'storeOut',
+            ]
+        )
+            ->middleware(
+                'permission:inventory.stock_out'
+            )
+            ->name(
+                'stock.out.store'
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | MASTER PART / PRODUCT
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get(
+            '/products',
+            [
+                ProductController::class,
+                'index',
+            ]
+        )
+            ->middleware(
+                'permission:products.view'
+            )
+            ->name(
+                'products.index'
+            );
+
+
+        Route::get(
+            '/products/import-template',
+            [
+                ProductController::class,
+                'importTemplate',
+            ]
+        )
+            ->middleware(
+                'permission:products.import'
+            )
+            ->name(
+                'products.import-template'
+            );
+
+
+        Route::post(
+            '/products',
+            [
+                ProductController::class,
+                'store',
+            ]
+        )
+            ->middleware(
+                'permission:products.manage'
+            )
+            ->name(
+                'products.store'
+            );
+
+
+        Route::post(
+            '/products/import',
+            [
+                ProductController::class,
+                'import',
+            ]
+        )
+            ->middleware(
+                'permission:products.import'
+            )
+            ->name(
+                'products.import'
+            );
+
+
+        Route::get(
+            '/products/{product}/edit',
+            [
+                ProductController::class,
+                'edit',
+            ]
+        )
+            ->middleware(
+                'permission:products.manage'
+            )
+            ->name(
+                'products.edit'
+            );
+
+
+        Route::put(
+            '/products/{product}',
+            [
+                ProductController::class,
+                'update',
+            ]
+        )
+            ->middleware(
+                'permission:products.manage'
+            )
+            ->name(
+                'products.update'
+            );
+
+
+        Route::delete(
+            '/products/{product}',
+            [
+                ProductController::class,
+                'destroy',
+            ]
+        )
+            ->middleware(
+                'permission:products.manage'
+            )
+            ->name(
+                'products.destroy'
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | KATEGORI PRODUK
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get(
+            '/product-categories',
+            [
+                ProductCategoryController::class,
+                'index',
+            ]
+        )
+            ->middleware(
+                'permission:products.view'
+            )
+            ->name(
+                'product-categories.index'
+            );
+
+
+        Route::resource(
+            'product-categories',
+            ProductCategoryController::class
+        )
+            ->only([
+                'store',
+                'edit',
+                'update',
+                'destroy',
+            ])
+            ->middleware(
+                'permission:products.manage'
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | WAREHOUSE
+        |--------------------------------------------------------------------------
+        */
+
+        Route::resource(
+            'warehouses',
+            WarehouseController::class
+        )
+            ->except([
+                'create',
+                'show',
+            ])
+            ->middleware(
+                'permission:inventory.manage'
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SETTINGS
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get(
+            '/settings',
+            [
+                LabelSettingController::class,
+                'edit',
+            ]
+        )
+            ->middleware(
+                'permission:branding.manage'
+            )
+            ->name(
+                'settings.edit'
+            );
+
+
+        Route::put(
+            '/settings',
+            [
+                LabelSettingController::class,
+                'update',
+            ]
+        )
+            ->middleware(
+                'permission:branding.manage'
+            )
+            ->name(
+                'settings.update'
+            );
+
+
+        Route::delete(
+            '/settings/logo',
+            [
+                LabelSettingController::class,
+                'destroy',
+            ]
+        )
+            ->middleware(
+                'permission:branding.manage'
+            )
+            ->name(
+                'settings.logo.destroy'
+            );
+
+
+        Route::delete(
+            '/settings/favicon',
+            [
+                LabelSettingController::class,
+                'destroyFavicon',
+            ]
+        )
+            ->middleware(
+                'permission:branding.manage'
+            )
+            ->name(
+                'settings.favicon.destroy'
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SUPER ADMIN
+        |--------------------------------------------------------------------------
+        */
+
+        Route::middleware(
+            'super_admin'
+        )
+            ->group(function () {
+                Route::resource(
+                    'roles',
+                    RoleController::class
+                )->except(
+                    'show'
+                );
+
+                Route::resource(
+                    'users',
+                    UserManagementController::class
+                )->except(
+                    'show'
+                );
+            });
+    });
