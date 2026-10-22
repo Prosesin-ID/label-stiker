@@ -2,18 +2,24 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\StockMovementType;
 use App\Http\Requests\StoreLabelPrintRequest;
 use App\Models\LabelPrint;
 use App\Models\Product;
+use App\Models\Warehouse;
 use App\Services\BarcodeService;
 use App\Services\LabelBrandingService;
+use App\Services\StockService;
 use Barryvdh\DomPDF\Facade\Pdf;
+use DomainException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
+use Throwable;
 
 class LabelPrintController extends Controller
 {
@@ -98,6 +104,15 @@ class LabelPrintController extends Controller
     public function create(
         BarcodeService $barcode
     ): View {
+        /*
+        |--------------------------------------------------------------------------
+        | Produk Inventory
+        |--------------------------------------------------------------------------
+        |
+        | Hanya produk aktif yang menggunakan tracking inventory.
+        |
+        */
+
         $products = Product::query()
             ->select([
                 'id',
@@ -109,9 +124,11 @@ class LabelPrintController extends Controller
                 'barcode_value',
                 'uom',
                 'product_category_id',
+                'track_inventory',
             ])
             ->with('category')
             ->where('is_active', true)
+            ->where('track_inventory', true)
             ->withSum(
                 'stockBalances as inventory_stock',
                 'quantity'
@@ -160,6 +177,27 @@ class LabelPrintController extends Controller
                 ]
             );
 
+        /*
+        |--------------------------------------------------------------------------
+        | Gudang Aktif
+        |--------------------------------------------------------------------------
+        */
+
+        $warehouses = Warehouse::query()
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get([
+                'id',
+                'code',
+                'name',
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | QR Catalog
+        |--------------------------------------------------------------------------
+        */
+
         $catalogQrs = $products
             ->pluck('catalog_url')
             ->push(
@@ -183,6 +221,9 @@ class LabelPrintController extends Controller
                 'products' =>
                     $products,
 
+                'warehouses' =>
+                    $warehouses,
+
                 'catalogQrs' =>
                     $catalogQrs,
 
@@ -197,13 +238,79 @@ class LabelPrintController extends Controller
     }
 
     public function store(
-        StoreLabelPrintRequest $request
+        StoreLabelPrintRequest $request,
+        StockService $stock
     ): RedirectResponse {
-        $product = Product::findOrFail(
-            $request->integer(
-                'product_id'
+        /*
+        |--------------------------------------------------------------------------
+        | Validasi Stock
+        |--------------------------------------------------------------------------
+        |
+        | Warehouse tidak disimpan langsung ke tabel label_prints.
+        | Warehouse digunakan untuk menentukan gudang mana yang stock-nya
+        | akan dikurangi.
+        |
+        */
+
+        $stockInput = $request->validate([
+            'warehouse_id' => [
+                'required',
+                'integer',
+                'exists:warehouses,id',
+            ],
+
+            'quantity' => [
+                'required',
+                'numeric',
+                'gt:0',
+                'max:99999999',
+            ],
+        ], [], [
+            'warehouse_id' => 'gudang',
+            'quantity' => 'jumlah',
+        ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Product
+        |--------------------------------------------------------------------------
+        */
+
+        $product = Product::query()
+            ->whereKey(
+                $request->integer(
+                    'product_id'
+                )
             )
-        );
+            ->where('is_active', true)
+            ->where('track_inventory', true)
+            ->firstOrFail();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Warehouse
+        |--------------------------------------------------------------------------
+        */
+
+        $warehouse = Warehouse::query()
+            ->whereKey(
+                (int) $stockInput[
+                    'warehouse_id'
+                ]
+            )
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        $quantity =
+            (float) $stockInput[
+                'quantity'
+            ];
+
+        /*
+        |--------------------------------------------------------------------------
+        | UUID Label
+        |--------------------------------------------------------------------------
+        */
 
         $uuid =
             (string) Str::uuid();
@@ -254,7 +361,7 @@ class LabelPrintController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | Validated Data
+        | Validated Label Data
         |--------------------------------------------------------------------------
         */
 
@@ -262,74 +369,193 @@ class LabelPrintController extends Controller
             collect(
                 $request->validated()
             )
-                ->except('logo')
+                ->except([
+                    'logo',
+                    'warehouse_id',
+                ])
                 ->all();
 
         /*
+         * Pastikan quantity menggunakan hasil validasi
+         * stock di atas.
+         */
+        $validated[
+            'quantity'
+        ] = $quantity;
+
+        /*
         |--------------------------------------------------------------------------
-        | Create Label
+        | Snapshot Stock Sebelum Label Dibuat
         |--------------------------------------------------------------------------
+        |
+        | Nilai ini tetap disimpan sebagai snapshot inventory pada saat
+        | label dibuat.
+        |
         */
 
-        $labelPrint =
-            LabelPrint::create([
-                ...$validated,
+        $inventoryStockBefore =
+            (float) $product
+                ->stockBalances()
+                ->sum(
+                    'quantity'
+                );
 
-                'purchase_order_no' =>
-                    $validated[
-                        'purchase_order_no'
-                    ]
-                    ?? '',
+        /*
+        |--------------------------------------------------------------------------
+        | Create Label + Stock Out
+        |--------------------------------------------------------------------------
+        |
+        | Kedua proses berada dalam database transaction.
+        |
+        | Jika stock tidak cukup:
+        | - Label tidak jadi dibuat
+        | - Stock tidak berubah
+        |
+        */
 
-                'quantity' =>
-                    $validated[
-                        'quantity'
-                    ]
-                    ?? 0,
+        try {
+            $labelPrint =
+                DB::transaction(
+                    function () use (
+                        $request,
+                        $stock,
+                        $product,
+                        $warehouse,
+                        $quantity,
+                        $uuid,
+                        $logoPath,
+                        $validated,
+                        $inventoryStockBefore
+                    ) {
+                        /*
+                        |--------------------------------------------------------------------------
+                        | Create Label
+                        |--------------------------------------------------------------------------
+                        */
 
-                'uuid' =>
-                    $uuid,
+                        $labelPrint =
+                            LabelPrint::create([
+                                ...$validated,
 
-                'created_by' =>
-                    $request
-                        ->user()
-                        ->id,
+                                'purchase_order_no' =>
+                                    $validated[
+                                        'purchase_order_no'
+                                    ]
+                                    ?? '',
 
-                'barcode_value' =>
-                    $product
-                        ->barcode_value,
+                                'quantity' =>
+                                    $quantity,
 
-                'inventory_stock' =>
-                    $product
-                        ->stockBalances()
-                        ->sum(
-                            'quantity'
-                        ),
+                                'uuid' =>
+                                    $uuid,
 
-                'logo_path' =>
-                    $logoPath,
+                                'created_by' =>
+                                    $request
+                                        ->user()
+                                        ->id,
 
-                'product_snapshot' => [
-                    ...$product->only([
-                        'sku',
-                        'name',
-                        'description',
-                        'customer_part_no',
-                        'supplier_code',
-                        'barcode_value',
-                        'uom',
-                    ]),
+                                'barcode_value' =>
+                                    $product
+                                        ->barcode_value,
 
-                    'category_name' =>
-                        $product
-                            ->category
-                            ?->name,
+                                /*
+                                 * Snapshot stock sebelum
+                                 * dikurangi oleh label.
+                                 */
+                                'inventory_stock' =>
+                                    $inventoryStockBefore,
 
-                    'catalog_url' =>
-                        $product
-                            ->catalogUrl(),
-                ],
-            ]);
+                                'logo_path' =>
+                                    $logoPath,
+
+                                'product_snapshot' => [
+                                    ...$product->only([
+                                        'sku',
+                                        'name',
+                                        'description',
+                                        'customer_part_no',
+                                        'supplier_code',
+                                        'barcode_value',
+                                        'uom',
+                                    ]),
+
+                                    'category_name' =>
+                                        $product
+                                            ->category
+                                            ?->name,
+
+                                    'catalog_url' =>
+                                        $product
+                                            ->catalogUrl(),
+                                ],
+                            ]);
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | Stock Keluar Otomatis
+                        |--------------------------------------------------------------------------
+                        |
+                        | Qty label menjadi stock keluar.
+                        |
+                        | Contoh:
+                        | Stock awal = 100
+                        | Qty label  = 20
+                        | Stock akhir = 80
+                        |
+                        */
+
+                        $stock->post(
+                            $product,
+                            $warehouse,
+                            -$quantity,
+                            StockMovementType::StockOut,
+                            0,
+                            reference: $labelPrint,
+                            postedBy:
+                                $request
+                                    ->user()
+                                    ->id,
+                            notes:
+                                'Stock keluar otomatis dari pembuatan label '
+                                . $labelPrint->uuid
+                                . '.',
+                        );
+
+                        return $labelPrint;
+                    },
+                    3
+                );
+        } catch (
+            DomainException $exception
+        ) {
+            /*
+             * Kalau stock tidak cukup,
+             * hapus file logo yang sempat dibuat.
+             */
+            $this->deleteStoredLabelLogo(
+                $logoPath
+            );
+
+            return back()
+                ->withErrors([
+                    'quantity' =>
+                        $exception
+                            ->getMessage(),
+                ])
+                ->withInput();
+        } catch (
+            Throwable $exception
+        ) {
+            /*
+             * Kalau terjadi error database lainnya,
+             * jangan tinggalkan file logo sampah.
+             */
+            $this->deleteStoredLabelLogo(
+                $logoPath
+            );
+
+            throw $exception;
+        }
 
         return redirect()
             ->route(
@@ -338,7 +564,13 @@ class LabelPrintController extends Controller
             )
             ->with(
                 'success',
-                'Label berhasil dibuat dan siap dicetak.'
+                'Label berhasil dibuat dan stock inventory otomatis berkurang '
+                . $quantity
+                . ' '
+                . $product->uom
+                . ' dari gudang '
+                . $warehouse->code
+                . '.'
             );
     }
 
@@ -352,35 +584,21 @@ class LabelPrintController extends Controller
         LabelPrint $labelPrint
     ): RedirectResponse {
         /*
-         * Logo yang disimpan pada label merupakan
-         * salinan khusus di folder logos/labels.
+         * Untuk sementara penghapusan label hanya
+         * menghapus riwayat label.
          *
-         * Hapus file tersebut agar tidak menjadi
-         * file sampah setelah label dihapus.
+         * Stock yang sudah keluar TIDAK dikembalikan
+         * otomatis.
+         *
+         * Jika nanti mentor/client meminta sistem
+         * reversal stock, fitur tersebut bisa
+         * ditambahkan kemudian.
          */
-        if (
-            $labelPrint->logo_path &&
-            str_starts_with(
-                $labelPrint->logo_path,
-                'logos/labels/'
-            ) &&
-            Storage::disk('public')
-                ->exists(
-                    $labelPrint->logo_path
-                )
-        ) {
-            Storage::disk('public')
-                ->delete(
-                    $labelPrint->logo_path
-                );
-        }
 
-        /*
-         * Hanya menghapus riwayat label.
-         *
-         * Product / Master Part dan stock
-         * tidak ikut terhapus.
-         */
+        $this->deleteStoredLabelLogo(
+            $labelPrint->logo_path
+        );
+
         $labelPrint->delete();
 
         return redirect()
@@ -413,6 +631,10 @@ class LabelPrintController extends Controller
         BarcodeService $barcode,
         LabelBrandingService $branding
     ) {
+        /*
+         * Membuka / mencetak ulang PDF
+         * TIDAK mengurangi stock lagi.
+         */
         $labelPrint->update([
             'printed_at' =>
                 now(),
@@ -582,6 +804,10 @@ class LabelPrintController extends Controller
         |--------------------------------------------------------------------------
         | Mark as Printed
         |--------------------------------------------------------------------------
+        |
+        | Bulk print hanya mengubah status printed.
+        | Tidak mengurangi stock.
+        |
         */
 
         LabelPrint::whereIn(
@@ -727,6 +953,8 @@ class LabelPrintController extends Controller
 
             /*
              * Buat halaman sesuai jumlah copy.
+             *
+             * Jumlah copy tidak mempengaruhi stock.
              */
             foreach (
                 range(
@@ -752,5 +980,44 @@ class LabelPrintController extends Controller
         }
 
         return $pages;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | DELETE STORED LABEL LOGO
+    |--------------------------------------------------------------------------
+    */
+
+    private function deleteStoredLabelLogo(
+        ?string $logoPath
+    ): void {
+        if (
+            ! $logoPath
+        ) {
+            return;
+        }
+
+        if (
+            ! str_starts_with(
+                $logoPath,
+                'logos/labels/'
+            )
+        ) {
+            return;
+        }
+
+        if (
+            ! Storage::disk('public')
+                ->exists(
+                    $logoPath
+                )
+        ) {
+            return;
+        }
+
+        Storage::disk('public')
+            ->delete(
+                $logoPath
+            );
     }
 }

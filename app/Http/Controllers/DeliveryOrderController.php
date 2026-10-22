@@ -216,7 +216,7 @@ class DeliveryOrderController extends Controller
         foreach (array_values($items) as $index => $item) {
             /** @var Product $product */
             $product = $products->get((int) $item['product_id']);
-            abort_unless($product, 422, 'Produk tidak aktif atau tidak ditemukan.');
+            abort_unless($product !== null, 422, 'Produk tidak aktif atau tidak ditemukan.');
             $deliveryOrder->items()->create([
                 'product_id' => $product->id,
                 'unit_id' => $product->unit_id,
