@@ -184,6 +184,56 @@
                 </a>
             @endif
 
+            {{--
+            |--------------------------------------------------------------------------
+            | OUTSTANDING PARTS
+            |--------------------------------------------------------------------------
+            | Monitoring permintaan parts customer:
+            | - Normal
+            | - Consignment
+            |
+            | Menampilkan:
+            | - Qty Requested
+            | - Qty Supplied
+            | - Qty Outstanding
+            | - Status Pending / Partial / Completed
+            |--------------------------------------------------------------------------
+            --}}
+            @if(auth()->user()->canAccess('inventory.manage'))
+                <a
+                    href="{{ route('outstanding-parts.index') }}"
+                    class="nav-item {{ request()->routeIs('outstanding-parts.*') ? 'active' : '' }}"
+                >
+                    <span class="nav-icon">&#9636;</span>
+                    Outstanding Parts
+                </a>
+            @endif
+
+            {{--
+            |--------------------------------------------------------------------------
+            | OUTSTANDING DELIVERY ORDER
+            |--------------------------------------------------------------------------
+            | Monitoring pengembalian dokumen DO asli.
+            |
+            | Menampilkan:
+            | - DO belum dicatat status dokumennya
+            | - DO asli belum kembali ke kantor
+            | - DO asli sudah diterima kantor
+            | - Histori pengembalian dokumen
+            |
+            | Tidak mengubah transaksi pengiriman atau stok.
+            |--------------------------------------------------------------------------
+            --}}
+            @if(auth()->user()->canAccess('inventory.manage'))
+                <a
+                    href="{{ route('outstanding-dos.index') }}"
+                    class="nav-item {{ request()->routeIs('outstanding-dos.*') ? 'active' : '' }}"
+                >
+                    <span class="nav-icon">&#9637;</span>
+                    Outstanding DO
+                </a>
+            @endif
+
             {{-- PENGATURAN --}}
             @if(auth()->user()->canAccess('branding.manage'))
                 <a

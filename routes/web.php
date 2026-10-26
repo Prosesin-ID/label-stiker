@@ -12,6 +12,8 @@ use App\Http\Controllers\LabelSettingController;
 use App\Http\Controllers\OperationalExpenseController;
 use App\Http\Controllers\OperationalMasterController;
 use App\Http\Controllers\OperationalPurchaseController;
+use App\Http\Controllers\OutstandingDoController;
+use App\Http\Controllers\OutstandingPartController;
 use App\Http\Controllers\PosController;
 use App\Http\Controllers\ProductCategoryController;
 use App\Http\Controllers\ProductController;
@@ -589,8 +591,6 @@ Route::middleware([
     |--------------------------------------------------------------------------
     | BIAYA OPRSIONAL (BIO)
     |--------------------------------------------------------------------------
-    | FITUR BARU
-    |--------------------------------------------------------------------------
     */
 
     Route::prefix('operational-expenses')
@@ -654,6 +654,139 @@ Route::middleware([
     )
         ->middleware('permission:inventory.manage')
         ->name('consignment-customer.store');
+
+    /*
+    |--------------------------------------------------------------------------
+    | OUTSTANDING PARTS
+    |--------------------------------------------------------------------------
+    | Mencatat permintaan parts customer untuk:
+    | - NORMAL
+    | - CONSIGNMENT
+    |
+    | Mendukung:
+    | - Daftar permintaan
+    | - Tambah permintaan
+    | - Detail permintaan
+    | - Supply parsial dan histori pemenuhan
+    |
+    | Pencatatan tidak langsung mengubah stok.
+    |--------------------------------------------------------------------------
+    */
+
+    Route::prefix('outstanding-parts')
+        ->name('outstanding-parts.')
+        ->middleware('permission:inventory.manage')
+        ->group(function () {
+
+            /*
+            | DAFTAR OUTSTANDING PARTS
+            */
+
+            Route::get(
+                '/',
+                [OutstandingPartController::class, 'index']
+            )->name('index');
+
+            /*
+            | FORM TAMBAH PERMINTAAN
+            */
+
+            Route::get(
+                '/create',
+                [OutstandingPartController::class, 'create']
+            )->name('create');
+
+            /*
+            | SIMPAN PERMINTAAN
+            */
+
+            Route::post(
+                '/',
+                [OutstandingPartController::class, 'store']
+            )->name('store');
+
+            /*
+            | SIMPAN SUPPLY PARSIAL DAN HISTORI
+            | FITUR BARU
+            */
+
+            Route::post(
+                '/{outstandingPart}/fulfillments',
+                [
+                    OutstandingPartController::class,
+                    'storeFulfillment',
+                ]
+            )->name('fulfillments.store');
+
+            /*
+            | DETAIL PERMINTAAN DAN HISTORI
+            */
+
+            Route::get(
+                '/{outstandingPart}',
+                [OutstandingPartController::class, 'show']
+            )->name('show');
+        });
+
+    /*
+    |--------------------------------------------------------------------------
+    | OUTSTANDING DELIVERY ORDER
+    |--------------------------------------------------------------------------
+    | Monitoring pengembalian dokumen Delivery Order asli.
+    |
+    | Mendukung:
+    | - Daftar seluruh Delivery Order
+    | - Filter status dokumen
+    | - Detail tracking DO
+    | - Update status dokumen asli
+    | - Histori perubahan status
+    |
+    | Status dokumen tidak mengubah status pengiriman atau stok.
+    |--------------------------------------------------------------------------
+    */
+
+    Route::prefix('outstanding-dos')
+        ->name('outstanding-dos.')
+        ->middleware('permission:inventory.manage')
+        ->group(function () {
+
+            /*
+            | DAFTAR OUTSTANDING DO
+            */
+
+            Route::get(
+                '/',
+                [
+                    OutstandingDoController::class,
+                    'index',
+                ]
+            )->name('index');
+
+            /*
+            | DETAIL TRACKING DO ASLI
+            */
+
+            Route::get(
+                '/{deliveryOrder}',
+                [
+                    OutstandingDoController::class,
+                    'show',
+                ]
+            )->name('show');
+
+            /*
+            | UPDATE PENERIMAAN DO ASLI
+            | BESERTA HISTORI PERUBAHAN
+            */
+
+            Route::post(
+                '/{deliveryOrder}/tracking',
+                [
+                    OutstandingDoController::class,
+                    'update',
+                ]
+            )->name('update');
+        });
 
     /*
     |--------------------------------------------------------------------------
