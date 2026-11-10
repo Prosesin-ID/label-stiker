@@ -493,14 +493,14 @@ Route::middleware([
         ->middleware('permission:inventory.manage')
         ->group(function () {
 
+            /*
+            | KEBUTUHAN OPERASIONAL
+            */
+
             Route::get(
                 '/',
                 [OperationalMasterController::class, 'index']
             )->name('index');
-
-            /*
-            | KEBUTUHAN OPERASIONAL
-            */
 
             Route::post(
                 '/needs',
@@ -654,6 +654,27 @@ Route::middleware([
     )
         ->middleware('permission:inventory.manage')
         ->name('consignment-customer.store');
+
+    /*
+    |--------------------------------------------------------------------------
+    | EDIT DATA PELANGGAN - FITUR BARU
+    |--------------------------------------------------------------------------
+    | Mengubah nama dan kode pelanggan melalui halaman Stock Consignment.
+    |
+    | Identitas pelanggan tetap menggunakan ID yang sama.
+    | Tidak menghapus pelanggan atau data stok consignment.
+    |
+    | Method updateCustomer akan ditambahkan ke:
+    | ConsignmentCustomerController.php
+    |--------------------------------------------------------------------------
+    */
+
+    Route::put(
+        '/consignment-customer/customers/{customer}',
+        [ConsignmentCustomerController::class, 'updateCustomer']
+    )
+        ->middleware('permission:inventory.manage')
+        ->name('consignment-customer.customers.update');
 
     /*
     |--------------------------------------------------------------------------

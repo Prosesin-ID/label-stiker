@@ -245,4 +245,150 @@ class ConsignmentCustomerController extends Controller
                 'Item Parts Consignment berhasil ditambahkan.'
             );
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | EDIT DATA PELANGGAN
+    |--------------------------------------------------------------------------
+    |
+    | Mengubah nama dan kode pelanggan tanpa mengubah ID.
+    | Data stok consignment tetap terhubung ke ID pelanggan.
+    |--------------------------------------------------------------------------
+    */
+
+    public function updateCustomer(
+        Request $request,
+        BusinessPartner $customer
+    ): RedirectResponse {
+
+        /*
+        |--------------------------------------------------------------------------
+        | PASTIKAN PELANGGAN AKTIF
+        |--------------------------------------------------------------------------
+        */
+
+        abort_unless(
+            $customer->is_customer && $customer->is_active,
+            404,
+            'Data pelanggan tidak ditemukan atau tidak aktif.'
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | BERSIHKAN SPASI INPUT
+        |--------------------------------------------------------------------------
+        */
+
+        $name = $request->input('name');
+        $code = $request->input('code');
+
+        $request->merge([
+            'name' => is_string($name) ? trim($name) : $name,
+            'code' => is_string($code) ? trim($code) : $code,
+        ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDASI SESUAI STRUKTUR DATABASE
+        |--------------------------------------------------------------------------
+        |
+        | business_partners.name maksimal 160 karakter.
+        | business_partners.code maksimal 40 karakter.
+        |
+        | Kode harus unik, termasuk terhadap kode
+        | pelanggan yang pernah di-soft delete.
+        |--------------------------------------------------------------------------
+        */
+
+        $validated = $request->validate(
+            [
+                'name' => [
+                    'required',
+                    'string',
+                    'max:160',
+                ],
+
+                'code' => [
+                    'required',
+                    'string',
+                    'max:40',
+                    Rule::unique('business_partners', 'code')
+                        ->ignore($customer->id),
+                ],
+
+                'return_product_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('products', 'id')
+                        ->where('is_active', true)
+                        ->whereNull('deleted_at'),
+                ],
+            ],
+            [
+                'name.required' =>
+                    'Nama pelanggan wajib diisi.',
+
+                'name.max' =>
+                    'Nama pelanggan maksimal 160 karakter.',
+
+                'code.required' =>
+                    'Kode pelanggan wajib diisi.',
+
+                'code.max' =>
+                    'Kode pelanggan maksimal 40 karakter.',
+
+                'code.unique' =>
+                    'Kode pelanggan sudah digunakan oleh data pelanggan lain.',
+
+                'return_product_id.exists' =>
+                    'Item parts yang dipilih tidak ditemukan.',
+            ]
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | SIMPAN PERUBAHAN
+        |--------------------------------------------------------------------------
+        |
+        | Hanya nama dan kode yang diperbarui.
+        | ID, status, alamat, dan relasi pelanggan
+        | tidak diubah.
+        |--------------------------------------------------------------------------
+        */
+
+        $customer->name = $validated['name'];
+        $customer->code = $validated['code'];
+
+        $customer->save();
+
+        /*
+        |--------------------------------------------------------------------------
+        | PERTAHANKAN FILTER SETELAH UPDATE
+        |--------------------------------------------------------------------------
+        */
+
+        $filters = [
+            'customer_id' => $customer->id,
+        ];
+
+        if (!empty($validated['return_product_id'])) {
+            $filters['product_id'] = $validated['return_product_id'];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | KEMBALI KE HALAMAN STOCK CONSIGNMENT
+        |--------------------------------------------------------------------------
+        */
+
+        return redirect()
+            ->route(
+                'consignment-customer.index',
+                $filters
+            )
+            ->with(
+                'success',
+                'Data pelanggan berhasil diperbarui.'
+            );
+    }
 }
